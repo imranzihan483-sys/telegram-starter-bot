@@ -1,24 +1,83 @@
-// Your bot's behaviour. Add commands here; grammY's docs (grammy.dev) cover
-// keyboards, sessions, files, inline queries and everything else.
 
 import { InlineKeyboard } from "grammy"
 
+const sourceId = process.env.MAIN_CHANNEL_ID
+const destinations = [
+  process.env.DEST_CHANNEL_ID_1,
+  process.env.DEST_CHANNEL_ID_2,
+].filter(Boolean)
+
+const copied = new Map()
+
 export function registerCommands(bot) {
   bot.command("start", (ctx) =>
-    ctx.reply(`Hi ${ctx.from?.first_name ?? "there"}. I am alive and hosted on FadeHost. Send /help to see what I can do.`, {
-      reply_markup: new InlineKeyboard().text("Ping me", "ping"),
-    }),
+    ctx.reply("Auto Poster Bot is running!")
   )
 
   bot.command("help", (ctx) =>
-    ctx.reply(["Commands:", "/start  say hello", "/help   this list", "/ping   check I am awake", "/id     show chat and user ids", "", "Send me any text and I echo it back."].join("\n")),
+    ctx.reply("Automatic channel posting is enabled.")
   )
 
-  bot.command("ping", (ctx) => ctx.reply("pong"))
+  bot.on("channel_post", async (ctx) => {
+    const msg = ctx.channelPost
+    const chatId = String(ctx.chat.id)
 
-  bot.command("id", (ctx) => ctx.reply(`Chat id: ${ctx.chat.id}\nYour id: ${ctx.from?.id ?? "unknown"}`))
+    console.log(`[CHANNEL] ${ctx.chat.title}: ${chatId}`)
 
-  bot.callbackQuery("ping", (ctx) => ctx.answerCallbackQuery({ text: "pong" }))
+    if (!sourceId || chatId !== sourceId) return
 
-  bot.on("message:text", (ctx) => ctx.reply(ctx.message.text))
+    const ids = []
+
+    for (const dest of destinations) {
+      try {
+        const result = await ctx.api.copyMessage(
+          dest,
+          ctx.chat.id,
+          msg.message_id
+        )
+        ids.push({ chatId: dest, messageId: result.message_id })
+      } catch (err) {
+        console.error("Copy failed:", err.message)
+      }
+    }
+
+    copied.set(msg.message_id, ids)
+  })
+
+  bot.on("edited_channel_post", async (ctx) => {
+    const msg = ctx.editedChannelPost
+
+    if (!sourceId || String(ctx.chat.id) !== sourceId) return
+
+    const oldCopies = copied.get(msg.message_id) || []
+
+    for (const item of oldCopies) {
+      try {
+        await ctx.api.deleteMessage(item.chatId, item.messageId)
+      } catch (err) {
+        console.error("Old copy delete failed:", err.message)
+      }
+    }
+
+    const ids = []
+
+    for (const dest of destinations) {
+      try {
+        const result = await ctx.api.copyMessage(
+          dest,
+          ctx.chat.id,
+          msg.message_id
+        )
+        ids.push({ chatId: dest, messageId: result.message_id })
+      } catch (err) {
+        console.error("Edited copy failed:", err.message)
+      }
+    }
+
+    copied.set(msg.message_id, ids)
+  })
+
+  bot.callbackQuery("ping", (ctx) =>
+    ctx.answerCallbackQuery({ text: "pong" })
+  )
 }
